@@ -1,0 +1,62 @@
+[
+  {
+    "file": "1-board.jpg",
+    "hash": "#/",
+    "label": "board",
+    "route": "#/",
+    "cards": 11,
+    "rows": 0,
+    "lists": 0,
+    "title": "Live make.fun bounties — pot, fee, time left, entries",
+    "requests": "1 req · 0 cached · 0 304",
+    "luma": {
+      "mean": 27.311488120349583,
+      "linear": 0.030573690527557658,
+      "p05": 0.00335021985077862,
+      "p50": 0.008675516301186112,
+      "p95": 0.0534691730918919,
+      "p99": 0.7660209481537987,
+      "contrast": 13.907350111162176
+    }
+  },
+  {
+    "file": "2-bounty.jpg",
+    "hash": "#/bounty/makefun-frontend-01",
+    "label": "bounty",
+    "route": "#/bounty/makefun-frontend-01",
+    "cards": 0,
+    "rows": 0,
+    "lists": 2,
+    "title": "Build the best make.fun frontend — make.fun bounty",
+    "requests": "2 req · 0 cached · 0 304",
+    "luma": {
+      "mean": 28.780724084825973,
+      "linear": 0.04066345396427367,
+      "p05": 0.00335021985077862,
+      "p50": 0.00335021985077862,
+      "p95": 0.23924673372343747,
+      "p99": 0.8749878503286536,
+      "contrast": 17.3380325876043
+    }
+  },
+  {
+    "file": "3-leaderboard.jpg",
+    "hash": "#/bounty/makefun-frontend-01/leaderboard",
+    "label": "leaderboard",
+    "route": "#/bounty/makefun-frontend-01/leaderboard",
+    "cards": 0,
+    "rows": 14,
+    "lists": 0,
+    "title": "Leaderboard — Build the best make.fun frontend",
+    "requests": "3 req · 0 cached · 0 304",
+    "luma": {
+      "mean": 26.726293053519083,
+      "linear": 0.022968263256665435,
+      "p05": 0.00335021985077862,
+      "p50": 0.010398086955190193,
+      "p95": 0.03115893795404901,
+      "p99": 0.47682066687838115,
+      "contrast": 8.722472737741404
+    }
+  }
+]
