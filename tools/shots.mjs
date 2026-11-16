@@ -80,28 +80,31 @@ function decodePng(buffer) {
   return { w, h, bpp, pixels };
 }
 
-/** Mean relative luma and how much of the frame is ink vs background. */
+/** Mean brightness (0-255), the ink/paper spread, and a text-vs-background contrast ratio. */
 function luma(png) {
   const { w, h, bpp, pixels } = png;
   const values = new Float64Array(w * h);
-  let sum = 0;
+  let linear = 0;
+  let srgb = 0;
+  const lin = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
   for (let i = 0, p = 0; i < pixels.length; i += bpp, p += 1) {
     const r = pixels[i] / 255;
     const g = pixels[i + 1] / 255;
     const b = pixels[i + 2] / 255;
-    const lin = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
-    const y = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-    values[p] = y;
-    sum += y;
+    values[p] = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    linear += values[p];
+    srgb += 0.2126 * r + 0.7152 * g + 0.0722 * b;
   }
   values.sort();
   const at = (q) => values[Math.min(values.length - 1, Math.floor(values.length * q))];
   return {
-    mean: sum / values.length,
+    mean: (srgb / (w * h)) * 255,
+    linear: linear / (w * h),
     p05: at(0.05),
     p50: at(0.5),
     p95: at(0.95),
-    contrast: (at(0.95) + 0.05) / (at(0.05) + 0.05),
+    p99: at(0.99),
+    contrast: (at(0.99) + 0.05) / (at(0.5) + 0.05),
   };
 }
 
@@ -130,8 +133,8 @@ for (const shot of SHOTS) {
   }));
   report.push({ ...shot, ...rendered, luma: reading });
   console.log(
-    `${shot.file}  ${png.readUInt32BE(16)}x${png.readUInt32BE(20)}  luma ${reading.mean.toFixed(1)}  ` +
-      `contrast ${reading.contrast.toFixed(2)}  cards ${rendered.cards}  rows ${rendered.rows}  ${rendered.requests}`,
+    `${shot.file}  ${png.readUInt32BE(16)}x${png.readUInt32BE(20)}  luma ${reading.mean.toFixed(1)}/255  ` +
+      `text-vs-bg ${reading.contrast.toFixed(2)}:1  ink p99 ${reading.p99.toFixed(3)}  cards ${rendered.cards}  rows ${rendered.rows}  ${rendered.requests}`,
   );
 }
 

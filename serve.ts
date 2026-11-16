@@ -1,14 +1,14 @@
-// A small static server for app/ (Node 22, standard library only) so the frontend can be
-// opened in a browser without a build step: `node serve.ts` serves app/ on
-// http://localhost:8080, `--port <n>` for another port.
+// A static server for app/ (Node 22, standard library only) — a development convenience that behaves
+// like the host the app is meant for: correct MIME types, gzip for text, and no path outside app/.
 //
-// It serves files and nothing else: a path outside app/ is refused, an unknown type is sent
-// as bytes, and no-store keeps the browser from showing a stale copy while you work.
+//   node serve.ts            http://localhost:8080
+//   node serve.ts --port 8123
 
-import { createReadStream, statSync } from 'node:fs';
+import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 
 const root = resolve(fileURLToPath(new URL('./app', import.meta.url)));
 const args = process.argv.slice(2);
@@ -16,7 +16,7 @@ const at = args.indexOf('--port');
 const asked = at === -1 ? 8080 : Number(args[at + 1]);
 const port = Number.isInteger(asked) && asked > 0 && asked < 65536 ? asked : 8080;
 
-const TYPES: Record<string, string> = {
+const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
@@ -31,36 +31,57 @@ const TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
+const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.svg']);
+const zipped = new Map(); // file -> gzipped Buffer, so a repeat request costs one map lookup
+
 createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
-  let pathname: string;
+  let path;
   try {
-    pathname = decodeURIComponent(url.pathname);
+    path = decodeURIComponent(url.pathname);
   } catch {
     response.writeHead(400).end('bad request');
     return;
   }
-  if (pathname.endsWith('/')) pathname += 'index.html';
-  const file = resolve(join(root, normalize(pathname)));
+  if (path.endsWith('/')) path += 'index.html';
+  const file = resolve(join(root, normalize(path)));
   if (file !== root && !file.startsWith(root + sep)) {
     response.writeHead(403).end('forbidden');
     return;
   }
-  let size: number;
+
+  let size;
   try {
     const stats = statSync(file);
     if (!stats.isFile()) throw new Error('not a file');
     size = stats.size;
   } catch {
-    response.writeHead(404).end('not found');
+    response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('not found');
     return;
   }
-  response.writeHead(200, {
-    'content-type': TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
-    'content-length': size,
+
+  const ext = extname(file).toLowerCase();
+  const headers = {
+    'content-type': MIME[ext] ?? 'application/octet-stream',
     'cache-control': 'no-store',
-  });
-  createReadStream(file).pipe(response);
+    'x-content-type-options': 'nosniff',
+  };
+
+  if (COMPRESSIBLE.has(ext) && String(request.headers['accept-encoding'] ?? '').includes('gzip')) {
+    let body = zipped.get(file);
+    if (!body) {
+      body = gzipSync(readFileSync(file), { level: 9 });
+      zipped.set(file, body);
+    }
+    response.writeHead(200, { ...headers, 'content-encoding': 'gzip', 'content-length': body.length, vary: 'accept-encoding' });
+    if (request.method === 'HEAD') response.end();
+    else response.end(body);
+    return;
+  }
+
+  response.writeHead(200, { ...headers, 'content-length': size });
+  if (request.method === 'HEAD') response.end();
+  else createReadStream(file).pipe(response);
 }).listen(port, '127.0.0.1', () => {
   console.log(`app/ is on http://localhost:${port}`);
 });

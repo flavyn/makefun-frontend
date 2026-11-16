@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>make.fun bounties — live board</title>
+<meta name="description" content="A small, dependency-free board of live make.fun bounties: live pot, entry fee, time left, entries, leaderboards and public profiles, read from make.fun's public API.">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#view">Skip to the bounties</a>
+
+<header class="top">
+  <a class="brand" href="#/" aria-label="make.fun bounties, board">
+    <span class="mark" aria-hidden="true"></span>
+    <span>make.fun</span>
+    <em>bounties</em>
+  </a>
+  <form class="search" id="search" role="search" autocomplete="off">
+    <label class="sr" for="q">Search bounties</label>
+    <input id="q" name="q" type="search" placeholder="Search title, category, skill  /" spellcheck="false">
+  </form>
+  <p class="net" id="net" title="Requests made this session, answers served from cache, and answers the API left unchanged with 304 Not Modified">
+    <span class="led" aria-hidden="true"></span><span id="nettext">starting</span>
+  </p>
+</header>
+
+<main id="view" tabindex="-1">
+  <p class="loading">Loading live bounties…</p>
+</main>
+
+<footer>
+  <p>
+    Read-only view of the public API at <a href="https://make.fun" rel="noopener">make.fun</a>.
+    No framework, no build step, no cookies.
+  </p>
+  <p class="fine" id="fine"></p>
+</footer>
+
+<noscript><p class="noscript">This board reads make.fun's public API with JavaScript. Please enable it.</p></noscript>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>

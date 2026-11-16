@@ -1,19 +1,18 @@
 // Value formatting: money, counts, countdowns, dates and percentages, all from the API's own strings.
 
-const usd = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 2,
-});
-
-const int = new Intl.NumberFormat('en-US');
+const int = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 
 /** '$664.50' or '$1,325' — whole amounts lose the cents, as the API's pot strings often carry them. */
 export function money(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return '—';
-  return usd.format(n);
+  const cents = Number.isInteger(n) ? 0 : 2;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: cents,
+    maximumFractionDigits: cents,
+  }).format(n);
 }
 
 /** 11242 -> '11,242'. */
@@ -37,25 +36,19 @@ export function bytes(value) {
   return `${(n / 1024).toFixed(0)} KiB`;
 }
 
-const UNITS = [
-  [86400000, 'd'],
-  [3600000, 'h'],
-  [60000, 'm'],
-];
-
-/** '1d 17h' / '42m' / 'ended 3h ago' — the number a board is scanned for. */
+/** '1d 5h' / '5h 42m' / '42m' / 'ended 3h ago' — the number a board is scanned for. */
 export function left(iso, now = Date.now()) {
   const ms = new Date(iso).getTime() - now;
   if (!Number.isFinite(ms)) return '—';
   const past = ms <= 0;
-  let rest = Math.abs(ms);
-  const parts = [];
-  for (const [size, unit] of UNITS) {
-    const n = Math.floor(rest / size);
-    rest -= n * size;
-    if (n > 0 && parts.length < 2) parts.push(`${n}${unit}`);
-  }
-  const text = parts.join(' ') || '<1m';
+  const rest = Math.abs(ms);
+  const days = Math.floor(rest / 86400000);
+  const hours = Math.floor((rest % 86400000) / 3600000);
+  const minutes = Math.floor((rest % 3600000) / 60000);
+  let text;
+  if (days > 0) text = `${days}d ${hours}h`;
+  else if (hours > 0) text = `${hours}h ${minutes}m`;
+  else text = `${minutes}m`;
   return past ? `ended ${text} ago` : text;
 }
 
