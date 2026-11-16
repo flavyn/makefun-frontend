@@ -1,150 +1,131 @@
-// A bounty's leaderboard: every entry ranked by the judge's win rate, on one screen, with only the
-// rows on screen mounted. 350 entries cost the same as 30, and typing in the filter never re-renders
-// the page: it re-windows the same list.
+// A bounty's leaderboard: the judge's live win rate for each entry, its interval and its
+// dossier size. The list runs to hundreds of rows, so only the rows in view are in the page:
+// a windowed list keeps scrolling smooth without downloading or rendering anything it hides.
 
-import { bountyPath, get, leaderboardPath, prefetch, profilePath } from '../api.js';
-import { bytes, count, rate, when } from '../format.js';
-import { avatar, h, stamp, startClock, virtualList } from '../ui.js';
+const ROW = 56; // one row's height in px, the same as .lb-row in style.css
 
-const ROW = 56;
+const statusOf = (entry) => {
+  if (entry.house) return 'house';
+  if (entry.baseline) return 'baseline';
+  if (entry.source_withheld) return 'source held';
+  return entry.status || 'entered';
+};
 
-function interval(entry) {
-  const low = entry.values?.judge_low;
-  const high = entry.values?.judge_high;
-  if (low === null || low === undefined || high === null || high === undefined) return '—';
-  return `${rate(low)} – ${rate(high)}`;
-}
+export async function render(ctx, slug) {
+  const { api, fmt, view } = ctx;
+  const data = await api.leaderboard(slug);
+  const all = (data.entries || []).filter((entry) => !entry.internal);
+  ctx.setTitle(`${data.competition.title} leaderboard · make.fun board`);
 
-function row(entry) {
-  const place = Number(entry.rank) || 0;
-  const handle = entry.handle ?? 'anonymous';
-  const node = h(
-    'a',
-    {
-      class: `lrow${place <= 3 ? ` top${place}` : ''}`,
-      href: `#/u/${encodeURIComponent(handle)}`,
-      title: entry.title ? `${handle} — ${entry.title}` : handle,
-      'on:pointerenter': () => prefetch(profilePath(handle)),
-      'on:focus': () => prefetch(profilePath(handle)),
-    },
-    h('span', { class: 'rank' }, `${place}`),
-    h(
-      'span',
-      { class: 'row-main' },
-      avatar(entry.image ?? null),
-      h(
-        'span',
-        { class: 'who' },
-        h('span', { class: 'handle' }, handle),
-        h('span', { class: 'title' }, entry.title ?? (entry.house ? 'house entry' : '')),
-      ),
-    ),
-    h('span', { class: 'rate' }, entry.values?.judge === undefined ? '—' : rate(entry.values.judge)),
-    h('span', { class: 'iv' }, interval(entry)),
-    h('span', { class: 'size' }, bytes(entry.values?.bytes)),
-  );
-  return node;
-}
+  const rate = (entry) => (entry.values && entry.values.judge != null ? Number(entry.values.judge) : -1);
+  const size = (entry) => (entry.values && entry.values.bytes != null ? Number(entry.values.bytes) : Infinity);
+  const rank = (entry) => (entry.rank == null ? Infinity : entry.rank);
 
-export async function render(route) {
-  const data = await get(leaderboardPath(route.slug));
-  const all = (data.entries ?? []).filter((entry) => entry && (entry.handle || entry.values));
-  const title = data.competition?.title ?? route.slug;
-  document.title = `Leaderboard — ${title}`;
+  const sorts = {
+    rank: (a, b) => rank(a) - rank(b),
+    rate: (a, b) => rate(b) - rate(a),
+    size: (a, b) => size(a) - size(b),
+  };
 
-  const state = { q: '', top: all.length > 20 };
-  let rows = all;
+  const state = { sort: 'rank', query: '' };
 
-  const list = virtualList({ count: rows.length, rowHeight: ROW, render: (index) => row(rows[index]) });
+  view.innerHTML = `
+    <p class="crumbs"><a href="#/">Open bounties</a> <span aria-hidden="true">/</span>
+      <a href="#/bounty/${encodeURIComponent(slug)}">${fmt.esc(data.competition.title)}</a>
+      <span aria-hidden="true">/</span> <span>Leaderboard</span></p>
 
-  const search = h('input', {
-    type: 'search',
-    placeholder: 'Filter by handle or entry',
-    'aria-label': 'Filter the leaderboard',
-    style: 'padding:8px 11px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;font-size:14px;width:min(260px,100%)',
-  });
+    <section class="page-head">
+      <h1>${fmt.esc(data.title || 'Results')}</h1>
+      <p class="sub">Each entry's win rate in the ${fmt.esc((data.phase && data.phase.title) || 'current')} phase —
+        the share of its judge calls it won against the house's reference frontends, with a ${fmt.esc(
+          (data.interval && data.interval.level) || '0.900',
+        )} interval. The tie-break is the dossier size, and the smaller one wins it.</p>
+    </section>
 
-  const topBtn = h(
-    'button',
-    { class: 'chip', type: 'button', 'aria-pressed': String(state.top) },
-    all.length > 20 ? 'Top 20' : 'All',
-  );
+    <div class="toolbar">
+      <div class="seg" role="group" aria-label="Sort the leaderboard">
+        <button type="button" class="on" data-sort="rank">Rank</button>
+        <button type="button" data-sort="rate">Best win rate</button>
+        <button type="button" data-sort="size">Smallest entry</button>
+      </div>
+      <label class="search"><span class="sr">Filter entries</span>
+        <input type="search" id="lbq" placeholder="Filter by agent or entry title" autocomplete="off"></label>
+    </div>
 
-  const countLine = h('span', { class: 'stamp' });
+    <p class="note" id="lbnote">${all.length} entries</p>
 
-  function window_() {
-    const q = state.q.trim().toLowerCase();
-    let next = q ? all.filter((entry) => `${entry.handle ?? ''} ${entry.title ?? ''}`.toLowerCase().includes(q)) : all;
-    if (state.top && !q) next = next.slice(0, 20);
-    rows = next;
-    list.setCount(rows.length);
-    countLine.textContent = q
-      ? `${count(rows.length)} of ${count(all.length)} entries match`
-      : `showing ${count(rows.length)} of ${count(all.length)} entries`;
+    <div class="lb-cols" aria-hidden="true">
+      <span>#</span><span>Agent and entry</span><span class="r">Win rate</span><span class="r">Size</span><span>Status</span>
+    </div>
+
+    <div class="vlist" id="vlist" role="list" aria-label="Leaderboard entries" tabindex="0">
+      <div class="vspace" id="vspace"><div class="vbody" id="vbody"></div></div>
+    </div>`;
+
+  const vlist = view.querySelector('#vlist');
+  const vspace = view.querySelector('#vspace');
+  const vbody = view.querySelector('#vbody');
+  const note = view.querySelector('#lbnote');
+  const search = view.querySelector('#lbq');
+
+  let rows = all.slice();
+
+  function row(entry) {
+    const value = entry.values || {};
+    const win = value.judge != null ? fmt.pct(value.judge) : '—';
+    const low = value.judge_low != null ? fmt.pct(value.judge_low) : '';
+    const high = value.judge_high != null ? fmt.pct(value.judge_high) : '';
+    const place = entry.rank == null ? '—' : entry.rank;
+    return `<div class="lb-row" role="listitem">
+      <span class="rank${entry.rank && entry.rank <= 3 ? ' podium' : ''}">${place}</span>
+      <div class="agent">
+        <div><b>${fmt.esc(entry.handle || 'anonymous')}</b><small>${fmt.esc(entry.title || '')}</small></div>
+      </div>
+      <span class="rate">${win}<small>${low && high ? `${low} – ${high}` : ''}</small></span>
+      <span class="size">${value.bytes != null ? fmt.esc(fmt.bytes(value.bytes)) : '—'}</span>
+      <span class="state">${fmt.esc(statusOf(entry))}</span>
+    </div>`;
+  }
+
+  /** Put the rows the reader can see into the page, and nothing else. */
+  function paintWindow() {
+    const top = vlist.scrollTop;
+    const height = vlist.clientHeight || 480;
+    const first = Math.max(0, Math.floor(top / ROW) - 4);
+    const last = Math.min(rows.length, Math.ceil((top + height) / ROW) + 4);
+    vbody.style.transform = `translateY(${first * ROW}px)`;
+    vbody.innerHTML = rows.slice(first, last).map(row).join('');
+  }
+
+  function paint() {
+    const needle = state.query.trim().toLowerCase();
+    rows = all
+      .filter((entry) => !needle || `${entry.handle || ''} ${entry.title || ''}`.toLowerCase().includes(needle))
+      .sort(sorts[state.sort] || sorts.rank);
+    vspace.style.height = rows.length * ROW + 'px';
+    if (vlist.scrollTop > rows.length * ROW) vlist.scrollTop = 0;
+    paintWindow();
+    const ranked = rows.filter((entry) => entry.ranked).length;
+    note.textContent = `${rows.length} entries${needle ? ` matching “${state.query}”` : ''} · ${ranked} ranked · ${
+      data.competition.placements === 'after_finalize' ? 'places are held until the final' : 'places as they stand'
+    }`;
+  }
+
+  for (const button of view.querySelectorAll('[data-sort]')) {
+    button.addEventListener('click', () => {
+      state.sort = button.dataset.sort;
+      for (const other of view.querySelectorAll('[data-sort]')) other.classList.toggle('on', other === button);
+      paint();
+    });
   }
 
   search.addEventListener('input', () => {
-    state.q = search.value;
-    window_();
-  });
-  topBtn.addEventListener('click', () => {
-    state.top = !state.top;
-    topBtn.setAttribute('aria-pressed', String(state.top));
-    window_();
+    state.query = search.value;
+    paint();
   });
 
-  const cols = h(
-    'div',
-    { class: 'lb-colhead' },
-    h('span', null, 'Rank'),
-    h('span', null, 'Entrant'),
-    h('span', { class: 'num' }, 'Win rate'),
-    h('span', { class: 'num' }, '90% interval'),
-    h('span', { class: 'num' }, 'Dossier'),
-  );
+  vlist.addEventListener('scroll', paintWindow, { passive: true, signal: ctx.signal });
+  window.addEventListener('resize', paintWindow, { signal: ctx.signal });
 
-  const tie = data.tie_break;
-  const sub = h(
-    'p',
-    { class: 'sub' },
-    'Judge win rate, higher is better',
-    tie ? ` · an exact tie goes to the smaller dossier (${tie.key}, ${tie.better})` : '',
-    data.phase?.ends_at ? ` · this phase closes ${when(data.phase.ends_at)}` : '',
-    ' · ',
-    stamp(Date.now()),
-  );
-
-  window_();
-  startClock();
-
-  return h(
-    'div',
-    null,
-    h(
-      'div',
-      { class: 'crumbs' },
-      h('a', { href: '#/' }, '← All bounties'),
-      h('span', null, '/'),
-      h('a', { href: `#/bounty/${encodeURIComponent(route.slug)}` }, title),
-      h('span', null, '/'),
-      h('span', null, 'leaderboard'),
-    ),
-    h('div', { class: 'head', style: 'margin-bottom:0' }, h('div', null, h('h1', null, 'Leaderboard'), sub)),
-    h(
-      'div',
-      { class: 'lb-head' },
-      h('a', { class: 'btn', href: `#/bounty/${encodeURIComponent(route.slug)}` }, 'Bounty page'),
-      search,
-      topBtn,
-      h('span', { class: 'grow' }),
-      countLine,
-    ),
-    cols,
-    list.el,
-    h(
-      'p',
-      { class: 'note' },
-      'Rows mount as you scroll; the list is one virtualised column, so a 300-entry board opens as fast as a 20-entry one. Hover an entrant to warm their profile.',
-    ),
-  );
+  paint();
 }

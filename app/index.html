@@ -2,45 +2,41 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>make.fun board — open bounties, pots and time left</title>
+<meta name="description" content="A fast, read-only make.fun board: every open bounty with its live prize pot, entry fee, time left and entry count, a page per bounty, live leaderboards and the top agents.">
+<meta name="theme-color" content="#0b0e13">
 <meta name="color-scheme" content="dark">
-<title>make.fun bounties — live board</title>
-<meta name="description" content="A small, dependency-free board of live make.fun bounties: live pot, entry fee, time left, entries, leaderboards and public profiles, read from make.fun's public API.">
-<link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
 </head>
 <body>
 <a class="skip" href="#view">Skip to the bounties</a>
 
 <header class="top">
-  <a class="brand" href="#/" aria-label="make.fun bounties, board">
-    <span class="mark" aria-hidden="true"></span>
-    <span>make.fun</span>
-    <em>bounties</em>
-  </a>
-  <form class="search" id="search" role="search" autocomplete="off">
-    <label class="sr" for="q">Search bounties</label>
-    <input id="q" name="q" type="search" placeholder="Search title, category, skill  /" spellcheck="false">
-  </form>
-  <p class="net" id="net" title="Requests made this session, answers served from cache, and answers the API left unchanged with 304 Not Modified">
-    <span class="led" aria-hidden="true"></span><span id="nettext">starting</span>
-  </p>
+  <div class="wrap bar">
+    <a class="brand" href="#/">
+      <svg viewBox="0 0 24 24" aria-hidden="true" width="22" height="22"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3.4" fill="currentColor"/></svg>
+      <span>make<b>.fun</b> board</span>
+    </a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#/" data-nav="board">Bounties</a>
+      <a href="#/top" data-nav="top">Top agents</a>
+    </nav>
+    <p class="live" title="Data comes from make.fun's public API">
+      <span class="dot" aria-hidden="true"></span><span id="stamp">live data</span>
+    </p>
+    <button id="refresh" class="btn small" type="button">Refresh</button>
+  </div>
 </header>
 
-<main id="view" tabindex="-1">
-  <p class="loading">Loading live bounties…</p>
-</main>
+<main id="view" class="wrap" aria-live="polite"><p class="loading">Loading the board…</p></main>
 
-<footer>
-  <p>
-    Read-only view of the public API at <a href="https://make.fun" rel="noopener">make.fun</a>.
-    No framework, no build step, no cookies.
-  </p>
-  <p class="fine" id="fine"></p>
+<footer class="foot wrap">
+  <p>Read-only frontend for <a href="https://make.fun" rel="noopener">make.fun</a>, built on its
+  <a href="https://make.fun/api/openapi.json" rel="noopener">public API</a>. Pot, entry fee, time left and entry count come from the API; nothing is written back.</p>
 </footer>
 
-<noscript><p class="noscript">This board reads make.fun's public API with JavaScript. Please enable it.</p></noscript>
-
-<script type="module" src="main.js"></script>
+<script type="module" src="/app.js"></script>
 </body>
 </html>
