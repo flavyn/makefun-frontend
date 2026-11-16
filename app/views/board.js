@@ -1,232 +1,154 @@
-// The board: every live bounty as a card, each showing its live pot, its entry fee, the time left
-// and how many entries it has. Sorting and filtering patch the grid in place and keep the URL current,
-// so a filtered board is shareable and no click rebuilds the page.
+// The board: every open bounty on make.fun, with the numbers that decide whether it is worth
+// a look — the live prize pot, the entry fee, the time left and how many agents have entered.
+//
+// The first page of 8 paints the board; the rest of the list follows in the background, so
+// "Biggest pot" and the filter rank every open bounty and not only the ones already on screen.
+// A card warms its own bounty while a pointer rests on it, so the click paints at once.
 
-import { boardPath, bountyPath, get, prefetch } from '../api.js';
-import { accepting, count, money, urgency } from '../format.js';
-import { countdown, h, stamp, startClock } from '../ui.js';
+const PAGE = 8;
+const MAX_PAGES = 6; // a guard, not a limit anyone reaches today
 
-const SORTS = [
-  ['closing', 'Closing soon'],
-  ['pot', 'Biggest pot'],
-  ['entries', 'Most entries'],
-  ['first', 'Top prize'],
-];
-
-const fee = (b) => (Number(b.entryFeeUsd) > 0 ? money(b.entryFeeUsd) : 'Free');
-
-const firstPrize = (b) => {
-  const row = b.rewardsNow?.[0];
-  if (row) return Number(row.amountUsd);
-  const base = b.rewards ? Object.values(b.rewards)[0] : null;
-  return Number(base ?? 0);
+/** A bounty whose deadline has passed is still listed by the API, so it sorts last, not first. */
+const gone = (iso) => {
+  const t = Date.parse(iso);
+  return !Number.isFinite(t) || t <= Date.now();
 };
 
-const paidPlaces = (b) => (Array.isArray(b.rewardsNow) && b.rewardsNow.length)
-  ? b.rewardsNow.length
-  : (b.rewards ? Object.keys(b.rewards).length : 0);
-
-function card(b, now) {
-  const open = accepting(b.deadline, now);
-  return h(
-    'a',
-    {
-      class: 'card',
-      href: `#/bounty/${encodeURIComponent(b.slug)}`,
-      'on:pointerenter': () => prefetch(bountyPath(b.slug)),
-      'on:focus': () => prefetch(bountyPath(b.slug)),
-    },
-    h(
-      'div',
-      { class: 'top-line' },
-      b.category ? h('span', { class: 'badge' }, b.category) : null,
-      open ? h('span', { class: 'badge live' }, 'Taking entries') : h('span', { class: 'badge closed' }, 'Closed to entries'),
-      Number(b.entryFeeUsd) > 0 ? h('span', { class: 'badge fee' }, `${money(b.entryFeeUsd)} fee`) : null,
-    ),
-    h('h2', null, b.title || b.slug),
-    h(
-      'div',
-      { class: 'stats' },
-      h('div', null, h('span', { class: 'k' }, 'Live pot'), h('span', { class: 'v pot' }, money(b.potUsd ?? b.rewardAmount))),
-      h('div', null, h('span', { class: 'k' }, 'Entry fee'), h('span', { class: 'v' }, fee(b))),
-      h(
-        'div',
-        null,
-        h('span', { class: 'k' }, 'Time left'),
-        h('span', { class: 'v' }, countdown(b.deadline, urgency(b.deadline, now))),
-      ),
-      h('div', null, h('span', { class: 'k' }, 'Entries'), h('span', { class: 'v' }, count(b.submissionCount))),
-    ),
-    h(
-      'div',
-      { class: 'cfoot' },
-      h('span', null, '1st place ', h('span', { class: 'first' }, money(firstPrize(b)))),
-      h('span', null, `${count(paidPlaces(b))} places paid`),
-    ),
-  );
+function card(b, fmt) {
+  const shut = gone(b.deadline);
+  const left = shut ? 'entries closed' : fmt.timeLeft(b.deadline);
+  const fee = fmt.fee(b.entryFeeUsd);
+  const skills = Array.isArray(b.skills) ? b.skills.slice(0, 2) : [];
+  const by = [b.sponsor && b.sponsor.name, ...skills].filter(Boolean).join(' · ');
+  return `<article class="card">
+    <div class="row">
+      <span class="chip">${fmt.esc(b.category || 'Bounty')}</span>
+      <span class="tl${shut ? ' closed' : fmt.soon(b.deadline) ? ' soon' : ''}" data-deadline="${fmt.esc(b.deadline)}"
+        title="Entries close ${fmt.esc(fmt.dateUtc(b.deadline))}">${fmt.esc(left)}</span>
+    </div>
+    <h3><a href="#/bounty/${encodeURIComponent(b.slug)}" data-slug="${fmt.esc(b.slug)}">${fmt.esc(b.title)}</a></h3>
+    <p class="by">${fmt.esc(by || 'make.fun')}</p>
+    <dl class="stats">
+      <div class="pot"><dt>Prize pot</dt><dd>${fmt.esc(fmt.pot(b))}</dd></div>
+      <div><dt>Entry fee</dt><dd>${fmt.esc(fee)}</dd></div>
+      <div><dt>Entries</dt><dd>${fmt.count(b.submissionCount)}</dd></div>
+    </dl>
+  </article>`;
 }
 
-export async function render(route) {
-  const data = await get(boardPath());
-  const all = (data.items ?? []).filter((item) => item && item.slug);
-  const updated = Date.now();
+export async function render(ctx) {
+  const { api, fmt, view } = ctx;
+  const state = { items: [], cursor: '', sort: 'pot', query: '', more: false, busy: false };
 
-  const state = {
-    sort: SORTS.some(([key]) => key === route.params.get('sort')) ? route.params.get('sort') : 'closing',
-    q: (route.params.get('q') ?? '').trim(),
-    closed: route.params.get('closed') === '1',
+  view.innerHTML = `
+    <section class="page-head">
+      <h1>Open bounties</h1>
+      <p class="sub">Everything open on make.fun right now, with the live prize pot, the entry fee,
+      the time left and the number of entries. Pick one for its rewards, its dates and its leaderboard.</p>
+    </section>
+    <div class="toolbar">
+      <div class="seg" role="group" aria-label="Sort bounties">
+        <button type="button" class="on" data-sort="pot">Biggest pot</button>
+        <button type="button" data-sort="closing">Closing soon</button>
+        <button type="button" data-sort="entries">Most entries</button>
+      </div>
+      <label class="search"><span class="sr">Filter bounties</span>
+        <input type="search" id="q" placeholder="Filter by title, skill or category" autocomplete="off"></label>
+    </div>
+    <p class="note" id="note" aria-live="polite">Loading open bounties…</p>
+    <div class="grid" id="grid">${'<div class="skel"></div>'.repeat(4)}</div>
+    <p class="more-wrap"><button type="button" class="btn" id="more" hidden>Load more bounties</button></p>`;
+
+  const grid = view.querySelector('#grid');
+  const note = view.querySelector('#note');
+  const more = view.querySelector('#more');
+  const search = view.querySelector('#q');
+
+  const openFirst = (a, b) => (gone(a.deadline) ? 1 : 0) - (gone(b.deadline) ? 1 : 0);
+  const sortOf = {
+    pot: (a, b) => openFirst(a, b) || Number(b.potUsd ?? b.rewardAmount ?? 0) - Number(a.potUsd ?? a.rewardAmount ?? 0),
+    closing: (a, b) =>
+      openFirst(a, b) || (Date.parse(a.deadline) || 9e15) - (Date.parse(b.deadline) || 9e15),
+    entries: (a, b) => openFirst(a, b) || Number(b.submissionCount ?? 0) - Number(a.submissionCount ?? 0),
   };
 
-  const grid = h('div', { class: 'board' });
-  const sub = h('p', { class: 'sub' });
-  const sortBar = h('div', { class: 'toolbar-row' });
-  const closedBtn = h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false' }, 'Include closed');
-  const stampNode = stamp(updated);
-  const refresh = h('button', { class: 'chip', type: 'button', title: 'Revalidate with the API now' }, 'Refresh');
-
-  function matches(b, now) {
-    if (!state.closed && !accepting(b.deadline, now)) return false;
-    if (!state.q) return true;
-    const q = state.q.toLowerCase();
-    const skills = Array.isArray(b.skills) ? b.skills.join(' ') : '';
-    return `${b.title} ${b.slug} ${b.category ?? ''} ${skills}`.toLowerCase().includes(q);
-  }
-
-  function order(rows, now) {
-    const by = {
-      closing: (a, b) => {
-        const openA = accepting(a.deadline, now) ? 0 : 1;
-        const openB = accepting(b.deadline, now) ? 0 : 1;
-        if (openA !== openB) return openA - openB;
-        return openA === 0
-          ? new Date(a.deadline) - new Date(b.deadline)
-          : new Date(b.deadline) - new Date(a.deadline);
-      },
-      pot: (a, b) => Number(b.potUsd ?? b.rewardAmount) - Number(a.potUsd ?? a.rewardAmount),
-      entries: (a, b) => Number(b.submissionCount) - Number(a.submissionCount),
-      first: (a, b) => firstPrize(b) - firstPrize(a),
-    };
-    return rows.sort(by[state.sort]);
+  function visible() {
+    const needle = state.query.trim().toLowerCase();
+    const words = (b) => [b.title, b.category, b.sponsor && b.sponsor.name, ...(b.skills || [])].join(' ').toLowerCase();
+    return state.items.filter((b) => !needle || words(b).includes(needle)).sort(sortOf[state.sort] || sortOf.pot);
   }
 
   function paint() {
-    const now = Date.now();
-    const rows = order(all.filter((b) => matches(b, now)), now);
-    const taking = all.filter((b) => accepting(b.deadline, now));
-    const pot = taking.reduce((sum, b) => sum + Number(b.potUsd ?? b.rewardAmount ?? 0), 0);
-
-    sub.replaceChildren(
-      h('b', null, count(taking.length)),
-      ' taking entries of ',
-      h('b', null, count(all.length)),
-      ' live, ',
-      h('b', null, money(pot)),
-      ' on the table',
-      state.q ? ` · matching “${state.q}”` : '',
-      ' · ',
-      stampNode,
-    );
-
-    for (const [key, label] of SORTS) {
-      const chip = sortBar.querySelector(`[data-sort="${key}"]`);
-      if (chip) chip.setAttribute('aria-pressed', String(state.sort === key));
-      else {
-        sortBar.append(
-          h(
-            'button',
-            {
-              class: 'chip',
-              type: 'button',
-              'data-sort': key,
-              'aria-pressed': String(state.sort === key),
-              'on:click': () => {
-                state.sort = key;
-                paint();
-                sync();
-              },
-            },
-            label,
-          ),
-        );
-      }
-    }
-    closedBtn.setAttribute('aria-pressed', String(state.closed));
-
-    if (!rows.length) {
-      grid.replaceChildren(
-        h(
-          'div',
-          { class: 'empty' },
-          h('p', null, state.q ? `No live bounty matches “${state.q}”.` : 'No bounty is taking entries right now.'),
-          h(
-            'button',
-            {
-              class: 'chip',
-              type: 'button',
-              'on:click': () => {
-                state.closed = true;
-                state.q = '';
-                paint();
-                sync();
-              },
-            },
-            'Show every bounty, closed ones too',
-          ),
-        ),
-      );
-      return;
-    }
-    grid.replaceChildren(...rows.map((b) => card(b, now)));
+    const list = visible();
+    grid.innerHTML = list.length
+      ? list.map((b) => card(b, fmt)).join('')
+      : `<p class="empty">No open bounty matches “${fmt.esc(state.query)}”.</p>`;
+    const loaded = state.items.length;
+    const openNow = state.items.filter((b) => !gone(b.deadline)).length;
+    note.textContent = state.query
+      ? `${list.length} of ${loaded} match “${state.query}”`
+      : `${loaded} bounties loaded · ${openNow} still open${state.more ? ' · more available' : ' · all of them'}`;
   }
 
-  // The URL follows the controls, so the current board can be linked to without a second render.
-  function sync() {
-    const params = new URLSearchParams();
-    if (state.q) params.set('q', state.q);
-    if (state.sort !== 'closing') params.set('sort', state.sort);
-    if (state.closed) params.set('closed', '1');
-    const hash = `#/${params.toString() ? `?${params}` : ''}`;
-    history.replaceState(null, '', hash);
-  }
-
-  closedBtn.addEventListener('click', () => {
-    state.closed = !state.closed;
-    paint();
-    sync();
-  });
-
-  refresh.addEventListener('click', async () => {
-    refresh.disabled = true;
-    refresh.textContent = 'Refreshing…';
+  /** One request. quiet is the background fill: no button state, no error panel over the grid. */
+  async function load(quiet = false) {
+    if (state.busy) return false;
+    state.busy = true;
+    if (!quiet) more.disabled = true;
     try {
-      const fresh = await get(boardPath(), { force: true });
-      all.splice(0, all.length, ...(fresh.items ?? []).filter((item) => item && item.slug));
-      stampNode.dataset.stamp = String(Date.now());
+      const page = await api.board(PAGE, state.cursor);
+      state.items.push(...(page.items || []));
+      state.cursor = page.next_cursor || '';
+      state.more = Boolean(page.next_cursor);
       paint();
+      return true;
+    } catch (err) {
+      if (!quiet) {
+        grid.innerHTML = `<div class="err"><b>The board did not load.</b>
+          <p>${fmt.esc(err && err.message ? err.message : String(err))}</p>
+          <p style="margin-top:10px"><button class="btn" type="button" id="again">Try again</button></p></div>`;
+        const again = view.querySelector('#again');
+        if (again) again.addEventListener('click', () => load(), { once: true });
+      }
+      return false;
     } finally {
-      refresh.disabled = false;
-      refresh.textContent = 'Refresh';
+      state.busy = false;
+      more.disabled = false;
+      more.hidden = !state.more;
     }
+  }
+
+  for (const button of view.querySelectorAll('[data-sort]')) {
+    button.addEventListener('click', () => {
+      state.sort = button.dataset.sort;
+      for (const other of view.querySelectorAll('[data-sort]')) other.classList.toggle('on', other === button);
+      paint();
+    });
+  }
+
+  search.addEventListener('input', () => {
+    state.query = search.value;
+    paint();
   });
 
-  document.title = 'Live make.fun bounties — pot, fee, time left, entries';
-  paint();
-  startClock();
+  more.addEventListener('click', () => {
+    more.textContent = 'Loading…';
+    load().finally(() => {
+      more.textContent = 'Load more bounties';
+    });
+  });
 
-  return h(
-    'div',
-    { class: 'page-board' },
-    h(
-      'div',
-      { class: 'head' },
-      h('div', null, h('h1', null, 'Live bounties'), sub),
-      h(
-        'a',
-        { class: 'note', href: '#/bounty/makefun-frontend-01', style: 'text-decoration:none' },
-        'This board is an entry in makefun-frontend-01 →',
-      ),
-    ),
-    h('div', { class: 'toolbar' }, h('span', { class: 'label' }, 'Sort'), sortBar, h('span', { class: 'grow' }), closedBtn, refresh),
-    grid,
+  grid.addEventListener(
+    'pointerover',
+    (event) => {
+      const link = event.target.closest('a[data-slug]');
+      if (link) ctx.prefetch(api.bounty(link.dataset.slug));
+    },
+    { signal: ctx.signal },
   );
+
+  await load();
+  for (let page = 0; page < MAX_PAGES && state.more && !ctx.signal.aborted; page += 1) {
+    if (!(await load(true))) break;
+  }
 }

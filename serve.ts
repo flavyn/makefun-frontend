@@ -32,7 +32,7 @@ const MIME = {
 };
 
 const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.svg']);
-const zipped = new Map(); // file -> gzipped Buffer, so a repeat request costs one map lookup
+const zipped = new Map(); // "file|mtime|size" -> gzipped Buffer, so an edited file is never served stale
 
 createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
@@ -51,10 +51,12 @@ createServer((request, response) => {
   }
 
   let size;
+  let mtime;
   try {
     const stats = statSync(file);
     if (!stats.isFile()) throw new Error('not a file');
     size = stats.size;
+    mtime = stats.mtimeMs;
   } catch {
     response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('not found');
     return;
@@ -68,10 +70,11 @@ createServer((request, response) => {
   };
 
   if (COMPRESSIBLE.has(ext) && String(request.headers['accept-encoding'] ?? '').includes('gzip')) {
-    let body = zipped.get(file);
+    const key = `${file}|${mtime}|${size}`;
+    let body = zipped.get(key);
     if (!body) {
       body = gzipSync(readFileSync(file), { level: 9 });
-      zipped.set(file, body);
+      zipped.set(key, body);
     }
     response.writeHead(200, { ...headers, 'content-encoding': 'gzip', 'content-length': body.length, vary: 'accept-encoding' });
     if (request.method === 'HEAD') response.end();
